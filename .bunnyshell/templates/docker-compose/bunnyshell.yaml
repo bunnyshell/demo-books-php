@@ -1,0 +1,118 @@
+kind: Environment
+name: demo-books-symfony
+type: primary
+components:
+    -
+        kind: Database
+        name: database
+        dockerCompose:
+            command: '--default-authentication-plugin=mysql_native_password'
+            environment:
+                MYSQL_DATABASE: symfony
+                MYSQL_PASSWORD: symfony_pass
+                MYSQL_ROOT_PASSWORD: ssap_toor
+                MYSQL_USER: symfony_user
+            image: 'mysql:8.0.29'
+            ports:
+                - '3306:3306'
+        volumes:
+            -
+                name: database-data
+                mount: /var/lib/mysql
+                subPath: ''
+    -
+        kind: SidecarContainer
+        name: nginx
+        gitRepo: 'https://github.com/bunnyshell/demo-books-php.git'
+        gitBranch: main
+        gitApplicationPath: backend/.docker/nginx
+        dockerCompose:
+            build:
+                context: ./backend/.docker/nginx
+            environment:
+                PHP_HOST: localhost
+            ports:
+                - '8080:8080'
+    -
+        kind: Application
+        name: symfony
+        gitRepo: 'https://github.com/bunnyshell/demo-books-php.git'
+        gitBranch: main
+        gitApplicationPath: backend
+        dockerCompose:
+            build:
+                context: ./backend
+                dockerfile: .docker/php/Dockerfile
+                target: dev
+            environment:
+                DATABASE_URL: 'mysql://symfony_user:symfony_pass@database:3306/symfony?serverVersion=8&charset=utf8mb4'
+                FRONTEND_URL: 'https://{{ components.frontend.ingress.hosts[0] }}'
+                PHP_MEMORY_LIMIT: '1G'
+                PHP_OPCACHE_ENABLE: '0'
+                PHP_OPCACHE_VALIDATE_TIMESTAMPS: '0'
+                RUN_PRE_RELEASE: 'true'
+                RUN_WARMUP: 'true'
+                XDEBUG_MODE: 'develop,debug'
+                XDEBUG_START_WITH_REQUEST: 'yes'
+                XDEBUG_IDE_KEY: 'PHPSTORM'
+            ports:
+                - '9000:9000'
+                - '8080:8080'
+        pod:
+            init_containers: {  }
+            sidecar_containers:
+                -
+                    from: nginx
+                    name: nginx
+                    environment: {  }
+                    shared_paths:
+                        -
+                            path: /var/www
+                            target:
+                                path: /var/www
+                                container: '@parent'
+                            initial_contents: '@target'
+                    volumes: {  }
+                    shared_volumes: {  }
+                    metadata:
+                        com.bunnyshell.k8s.id: 1
+        hosts:
+            -
+                hostname: 'symfony-{{ env.base_domain }}'
+                path: /
+                servicePort: 8080
+        volumes:
+            -
+                name: symfony-cache
+                mount: /var/www/var
+                subPath: ''
+    -
+        kind: Application
+        name: frontend
+        gitRepo: 'https://github.com/bunnyshell/demo-books-php.git'
+        gitBranch: main
+        gitApplicationPath: frontend
+        dockerCompose:
+            build:
+                context: ./frontend
+                dockerfile: .docker/Dockerfile    
+                target: dev
+            environment:
+                REACT_APP_BASE_API: 'https://{{ components.symfony.ingress.hosts[0] }}'
+            ports:
+                - '8080:8080'
+        hosts:
+            -
+                hostname: 'frontend-{{ env.base_domain }}'
+                path: /
+                servicePort: 8080
+volumes:
+    -
+        name: symfony-cache
+        size: 1Gi
+        type: disk
+    -
+        name: database-data
+        size: 1Gi
+        type: disk
+
