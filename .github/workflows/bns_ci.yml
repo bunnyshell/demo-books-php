@@ -1,0 +1,101 @@
+name: Bunnyshell CI
+concurrency: bns-ci
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    name: Deploy CI environment
+    runs-on: ubuntu-latest
+    outputs:
+      envId: ${{ env.BNS_ENV_ID }}
+      apiEndpointUrl: ${{ env.API_ENDPOINT_URL }}
+      appEndpointUrl: ${{ env.APP_ENDPOINT_URL }}
+    steps:
+    - name: Prepare vars
+      run: |-
+        echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-8`" >> "$GITHUB_ENV"
+        echo "BNS_ENV_NAME=CI ${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+    - name: Check out the repo
+      uses: actions/checkout@v2
+    - name: Get Kubernetes integration
+      uses: addnab/docker-run-action@v3
+      with:
+        image: bunnyshell/cli:latest
+        options: -v ${{ github.env }}:/github/envs.txt
+        run: |-
+          set -ex
+          echo "CLUSTER_ID=`bns k8s-clusters list --token ${{ secrets.BUNNYSHELL_ACCESS_TOKEN }} --organization ${{ vars.BUNNYSHELL_ORGANIZATION_ID }} --non-interactive -o json | jq -r '._embedded.item[0].id'`" >> /github/envs.txt
+    - name: Create Environment
+      uses: addnab/docker-run-action@v3
+      with:
+        image: bunnyshell/cli:latest
+        options: -v ${{ github.workspace }}:/work -v ${{ github.env }}:/github/envs.txt
+        run: |-
+          set -ex
+          echo "BNS_ENV_ID=`bns environments create --name "${{ env.BNS_ENV_NAME }}" --from-path /work/.bunnyshell/templates/docker-compose/bunnyshell.yaml --k8s "${{ env.CLUSTER_ID }}" --token ${{ secrets.BUNNYSHELL_ACCESS_TOKEN }} --project ${{ vars.BUNNYSHELL_PROJECT_ID }} --non-interactive -o json | jq -r '.id'`" >> /github/envs.txt
+    - name: Deploy Environment
+      uses: addnab/docker-run-action@v3
+      with:
+        image: bunnyshell/cli:latest
+        options: -v ${{ github.workspace }}:/work -v ${{ github.env }}:/github/envs.txt
+        run: |-
+          set -ex
+          DEPLOY_OUTPUT=`bns environments deploy --id ${{ env.BNS_ENV_ID }} --token ${{ secrets.BUNNYSHELL_ACCESS_TOKEN }} --non-interactive -o json`
+          echo "API_ENDPOINT_URL=`echo \"$DEPLOY_OUTPUT\" | grep -A 100 '\[' | jq -r '.[] | select(.name == \"symfony\") | .endpoints[0]'`" >> /github/envs.txt
+          echo "APP_ENDPOINT_URL=`echo \"$DEPLOY_OUTPUT\" | grep -A 100 '\[' | jq -r '.[] | select(.name == \"frontend\") | .endpoints[0]'`" >> /github/envs.txt
+  test:
+    name: Run E2E tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    continue-on-error: true
+    steps:
+    - name: API tests
+      run: |-
+        set -ex
+        API_ENDPOINT=${{ needs.deploy.outputs.apiEndpointUrl }}
+        if [ -z "$API_ENDPOINT" ]; then
+          echo "No API_ENDPOINT"
+          exit 1
+        fi
+
+        # Assert empty collection
+        ITEMS_COUNT=`curl -s --fail-with-body "${API_ENDPOINT%/}/books" | jq 'length'`
+        if [ $ITEMS_COUNT -neq 0 ]; then
+         echo "Wrong item count. Expected 0, got $ITEMS_COUNT."
+         exit 1
+        fi
+
+        # Add two items
+        curl -s --fail-with-body -X POST -H 'Content-Type: application/json' "${API_ENDPOINT%/}/books" -d '{"title":"Foo","description":"bar"}'
+        curl -s --fail-with-body -X POST -H 'Content-Type: application/json' "${API_ENDPOINT%/}/books" -d '{"title":"Bar","description":"foo"}'
+
+        # Assert the new collection count
+        ITEMS_COUNT=`curl -s --fail-with-body "${API_ENDPOINT%/}/books" | jq 'length'`
+        if [ $ITEMS_COUNT -neq 2 ]; then
+         echo "Wrong item count. Expected 2, got $ITEMS_COUNT."
+         exit 1
+        fi
+    - name: Frontend tests
+      run: |-
+        set -ex
+        APP_ENDPOINT=${{ needs.deploy.outputs.appEndpointUrl }}
+        if [ -z "$APP_ENDPOINT" ]; then
+          echo "No APP_ENDPOINT"
+          exit 1
+        fi
+
+        curl -s --fail-with-body "$APP_ENDPOINT"
+  cleanup:
+    name: Delete CI environment
+    runs-on: ubuntu-latest
+    if: "${{ needs.deploy.outputs.envId != '' }}"
+    needs: [deploy, test]
+    steps:
+      - name: Deleting Environment
+        uses: addnab/docker-run-action@v3
+        with:
+          image: bunnyshell/cli:latest
+          run: |-
+            bns environments delete --id ${{ needs.deploy.outputs.envId }} --token ${{ secrets.BUNNYSHELL_ACCESS_TOKEN }} --non-interactive
