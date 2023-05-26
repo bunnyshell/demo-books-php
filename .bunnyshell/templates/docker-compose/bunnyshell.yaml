@@ -45,6 +45,7 @@ components:
                 dockerfile: .docker/php/Dockerfile
                 target: dev
             environment:
+                FOO: bar
                 DATABASE_URL: 'mysql://symfony_user:symfony_pass@database:3306/symfony?serverVersion=8&charset=utf8mb4'
                 FRONTEND_URL: 'https://{{ components.frontend.ingress.hosts[0] }}'
                 PHP_MEMORY_LIMIT: '1G'
