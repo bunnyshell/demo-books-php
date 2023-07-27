@@ -1,0 +1,17 @@
+profiles:
+    php_dev:
+        command: ["php-fpm"]
+        syncPaths:
+            - remotePath: /var/www/var/
+              localPath: ..
+        portForwards:
+            - "9003<9003"
+        environment:
+            VAR: overridden
+        resources:
+            requests:
+                cpu: 500m
+                memory: 512Mi
+            limits:
+                cpu: 2
+                memory: 2Gi
