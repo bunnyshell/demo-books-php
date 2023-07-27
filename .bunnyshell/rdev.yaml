@@ -2,7 +2,7 @@ profiles:
     php_dev:
         command: ["php-fpm"]
         syncPaths:
-            - remotePath: /var/www/var/
+            - remotePath: /var/www/
               localPath: ..
         portForwards:
             - "9003<9003"
