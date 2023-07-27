@@ -1,5 +1,5 @@
 kind: Environment
-name: demo-books-symfony
+name: Demo Books with Symfony + React + MySQL
 type: primary
 components:
     -
@@ -95,7 +95,7 @@ components:
         dockerCompose:
             build:
                 context: ./frontend
-                dockerfile: .docker/Dockerfile    
+                dockerfile: .docker/Dockerfile
                 target: dev
             environment:
                 REACT_APP_BASE_API: 'https://{{ components.symfony.ingress.hosts[0] }}'
